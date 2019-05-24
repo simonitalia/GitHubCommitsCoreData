@@ -9,7 +9,10 @@
 import UIKit
 import CoreData
 
-class ViewController: UITableViewController {
+class ViewController: UITableViewController, NSFetchedResultsControllerDelegate {
+    
+    //Property to hold Fetched reults controller for commits
+    var fetchedResultsController: NSFetchedResultsController<Commit>!
     
     //Predicates
     var commitPredicate: NSPredicate?
@@ -18,7 +21,8 @@ class ViewController: UITableViewController {
     var coreDataContainer: NSPersistentContainer!
     
     //Property to store Core Datat Commit Objects (individual github commits)
-    var commits = [Commit]()
+//    var commits = [Commit]()
+        //This property no longer requied as replaced with fetchedResultsController
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -144,21 +148,38 @@ class ViewController: UITableViewController {
     
     //A4. Populate commits array property with commit objects with NSFetchRequest, and sort objects inside array
     func loadSavedCoreData() {
-        let request = Commit.createFetchRequest()
-        let sort = NSSortDescriptor(key: "date", ascending: false)
-        request.sortDescriptors = [sort]
         
-        //Predicate
-        request.predicate = commitPredicate
+        //Rewritten to wrap predicate within NSFetchedResultsController
+        if fetchedResultsController == nil {
+            
+            let request = Commit.createFetchRequest()
+            let sortOptions = NSSortDescriptor(key: "author.name", ascending: true)
+            request.sortDescriptors = [sortOptions]
+            request.fetchBatchSize = 20
+                //limit fetch to 20 objects
+            
+            fetchedResultsController = NSFetchedResultsController(fetchRequest: request, managedObjectContext: coreDataContainer.viewContext, sectionNameKeyPath: "author.name", cacheName: nil)
+                    //create table sections based on author's name. Note! Still need to change the sort to be based on same attribute. In this case author.name
+            fetchedResultsController.delegate = self
+
+        }
+        
+        fetchedResultsController.fetchRequest.predicate = commitPredicate
         
         do {
-            commits = try coreDataContainer.viewContext.fetch(request)
-            print("Loaded \(commits.count) commits.")
+            try fetchedResultsController.performFetch()
             tableView.reloadData()
+//            print("Loaded \(commits.count) commits.")
             
         } catch {
             print("Fetch failed with error: \(error)")
         }
+    }
+    
+    //TableView section titles
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        
+        return fetchedResultsController.sections![section].name
     }
     
     //Allow user to filter Core Data objects
@@ -224,12 +245,19 @@ class ViewController: UITableViewController {
     
     //Set number of table sections
     override func numberOfSections(in tableView: UITableView) -> Int {
-        return 1
+
+//        return 1
+        
+        return fetchedResultsController.sections?.count ?? 0
     }
     
     //Set number of table rows in section
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return commits.count
+        
+//        return commits.count
+        
+        let sectionInfo = fetchedResultsController.sections![section]
+        return sectionInfo.numberOfObjects
     }
     
     //Configure cell object to display data in table rows
@@ -237,7 +265,8 @@ class ViewController: UITableViewController {
         
         let cell = tableView.dequeueReusableCell(withIdentifier: "CommitCell", for: indexPath)
         
-        let commit = commits[indexPath.row]
+//        let commit = commits[indexPath.row]
+        let commit = fetchedResultsController.object(at: indexPath)
         cell.textLabel!.text = commit.message
         cell.detailTextLabel!.text = "By: \(commit.author.name) on \(commit.date.description)"
         
@@ -247,7 +276,9 @@ class ViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         
         if let vc = storyboard?.instantiateViewController(withIdentifier: "DetailVC") as? DetailViewController {
-            vc.detailItem = commits[indexPath.row]
+//            vc.detailItem = commits[indexPath.row]
+            
+            vc.detailItem = fetchedResultsController.object(at: indexPath)
             navigationController?.pushViewController(vc, animated: true)
         }
     }
@@ -258,17 +289,28 @@ class ViewController: UITableViewController {
         if editingStyle == .delete {
             
             //Delete commit from commit array and TableView
-            let commit = commits[indexPath.row]
-            commits.remove(at: indexPath.row)
-            tableView.deleteRows(at: [indexPath], with: .fade)
+//            commits.remove(at: indexPath.row)
+            let commit = fetchedResultsController.object(at: indexPath)
+//            tableView.deleteRows(at: [indexPath], with: .fade)
+            coreDataContainer.viewContext.delete(commit)
+            saveCoreDataObjectContext()
             
             //Delete from CoreData NSManagedObjectContext
             coreDataContainer.viewContext.delete(commit)
             
             //Update CoreData database
             saveCoreDataObjectContext()
-            
-            print("Commit Objects: \(commits.count)")
+        }
+    }
+    
+    //This method required to delete the row from the table now that we're using NSFetchedResultsController
+    func controller(_ controller: NSFetchedResultsController<NSFetchRequestResult>, didChange anObject: Any, at indexPath: IndexPath?, for type: NSFetchedResultsChangeType, newIndexPath: IndexPath?) {
+        
+        switch type {
+            case .delete:
+                tableView.deleteRows(at: [indexPath!], with: .automatic)
+            default:
+                break
         }
     }
 }
